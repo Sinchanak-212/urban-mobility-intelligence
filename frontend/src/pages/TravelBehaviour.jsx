@@ -3,13 +3,7 @@ import {
   Clock,
   Navigation,
   Compass,
-  DollarSign,
-  Car,
-  Users,
-  Percent,
   Layers,
-  ArrowRight,
-  TrendingUp,
   Activity
 } from 'lucide-react';
 import ChartCard from '../components/ChartCard';
@@ -17,7 +11,6 @@ import KPICard from '../components/KPICard';
 import Badge from '../components/Badge';
 import Loading from '../components/Loading';
 import ErrorState from '../components/ErrorState';
-import DistributionChart from '../charts/DistributionChart';
 import mobilityApi from '../services/api';
 import { useAnalytics } from '../context/AnalyticsContext';
 import {
@@ -31,27 +24,60 @@ import {
   Cell
 } from 'recharts';
 
+const formatNumber = (value, fractionDigits = 2) => {
+  if (value === null || value === undefined || value === '') return 'Not available';
+  const number = Number(value);
+  return Number.isFinite(number)
+    ? number.toLocaleString('en-US', {
+        minimumFractionDigits: fractionDigits,
+        maximumFractionDigits: fractionDigits
+      })
+    : 'Not available';
+};
+
+const formatCount = (value) => {
+  if (value === null || value === undefined || value === '') return 'Not available';
+  const number = Number(value);
+  return Number.isFinite(number) ? number.toLocaleString('en-US') : 'Not available';
+};
+
+const isNumericValue = (value) =>
+  value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value));
+
 export const TravelBehaviour = () => {
   const { dateRange, borough, provider, refreshKey } = useAnalytics();
   const [data, setData] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [distTab, setDistTab] = useState('distance'); // 'distance' | 'duration' | 'fare'
+  const [distTab, setDistTab] = useState('distance');
+  const [retryKey, setRetryKey] = useState(0);
 
   useEffect(() => {
     let isMounted = true;
     setIsLoading(true);
+    setError(null);
+    setData(null);
 
-    mobilityApi.getBehaviour({ dateRange, borough, provider })
-      .then((res) => {
+    Promise.all([
+      mobilityApi.getBehaviour({ dateRange, borough, provider }),
+      mobilityApi.getBehaviourByBorough({ dateRange, borough, provider }),
+      mobilityApi.getBehaviourByHour({ dateRange, borough, provider }),
+      mobilityApi.getWeekdayWeekend({ dateRange, borough, provider })
+    ])
+      .then(([summary, boroughs, hourly, weekdayWeekend]) => {
         if (isMounted) {
-          setData(res);
+          setData({
+            summary: summary && typeof summary === 'object' ? summary : null,
+            boroughs: Array.isArray(boroughs) ? boroughs.filter(Boolean) : [],
+            hourly: Array.isArray(hourly) ? hourly.filter(Boolean) : [],
+            weekdayWeekend: Array.isArray(weekdayWeekend) ? weekdayWeekend.filter(Boolean) : []
+          });
           setIsLoading(false);
         }
       })
       .catch((err) => {
         if (isMounted) {
-          setError(err.message);
+          setError(err?.response?.data?.detail || err?.message || 'Unable to load travel behaviour data.');
           setIsLoading(false);
         }
       });
@@ -59,28 +85,58 @@ export const TravelBehaviour = () => {
     return () => {
       isMounted = false;
     };
-  }, [dateRange, borough, provider, refreshKey]);
+  }, [dateRange, borough, provider, refreshKey, retryKey]);
 
-  if (isLoading && !data) {
-    return <Loading message="Computing travel behaviour distributions and passenger ride modes..." />;
+  if (isLoading) {
+    return <Loading message="Loading January 2025 travel behaviour analytics..." />;
   }
 
-  if (error && !data) {
-    return <ErrorState message={error} onRetry={() => window.location.reload()} />;
+  if (error) {
+    return <ErrorState message={error} onRetry={() => setRetryKey((key) => key + 1)} />;
   }
 
-  const {
-    timePeriods,
-    distanceDistribution,
-    durationDistribution,
-    fareDistribution,
-    sharedVsNonShared,
-    serviceProviders,
-    avgDurationByZone
-  } = data;
+  const summary = data?.summary;
+  const boroughs = data?.boroughs ?? [];
+  const hourly = (data?.hourly ?? []).filter(
+    (item) => isNumericValue(item.pickup_hour) && isNumericValue(item.total_trips)
+  );
+  const weekdayWeekend = data?.weekdayWeekend ?? [];
+  const hasData =
+    Boolean(summary && Object.keys(summary).length > 0) ||
+    boroughs.length > 0 ||
+    hourly.length > 0 ||
+    weekdayWeekend.length > 0;
+  const boroughData = boroughs
+    .filter((item) => item.pickup_borough && isNumericValue(item.avg_duration_minutes))
+    .map((item) => ({
+      ...item,
+      avg_duration_minutes: Number(item.avg_duration_minutes)
+    }));
+  const distanceSummary = [
+    { metric: 'Average', value: summary?.average_distance_miles },
+    { metric: 'Median', value: summary?.median_distance_miles },
+    { metric: 'Minimum', value: summary?.minimum_distance },
+    { metric: 'Maximum', value: summary?.maximum_distance }
+  ]
+    .filter((item) => isNumericValue(item.value))
+    .map((item) => ({ ...item, value: Number(item.value) }));
+  const durationSummary = [
+    { metric: 'Average', value: summary?.average_duration_minutes },
+    { metric: 'Median', value: summary?.median_duration_minutes }
+  ]
+    .filter((item) => isNumericValue(item.value))
+    .map((item) => ({ ...item, value: Number(item.value) }));
+  const summaryChartData = distTab === 'distance' ? distanceSummary : durationSummary;
 
   return (
     <div className="space-y-6">
+      {!hasData && (
+        <ErrorState
+          title="No travel behaviour data available"
+          message="The API returned no January 2025 travel behaviour records."
+          onRetry={() => setRetryKey((key) => key + 1)}
+        />
+      )}
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-slate-800/80">
         <div>
@@ -89,122 +145,124 @@ export const TravelBehaviour = () => {
               Travel Behaviour
             </h1>
             <Badge variant="indigo" size="sm">
-              Rider Habits & Distributions
+              January 2025 TLC Data
             </Badge>
           </div>
           <p className="text-sm text-slate-400 mt-1">
-            Empirical distributions of trip lengths, elapsed travel duration, time-of-day behavioral patterns, and shared ride economics.
+            Travel distance and duration summaries, hourly patterns, borough comparisons, and weekday/weekend trip volume.
           </p>
         </div>
       </div>
 
-      {/* Ride Type & Service Provider Comparative KPI Banner */}
+      {/* Travel Behaviour Summary */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <KPICard
-          title="Solo / Non-Shared Trips"
-          value={`${sharedVsNonShared.nonShared.percentage}%`}
-          unit="Market Share"
-          trend="Predominant Mode"
-          trendType="neutral"
-          subtitle="Avg fare: $27.15 &bull; 21.2 min"
-          icon={Car}
+          title="Valid Trips"
+          value={formatCount(summary?.valid_trips)}
+          unit="trips"
+          subtitle="Positive distance and duration"
+          icon={Activity}
           accentColor="cyan"
-          tooltip="Single-party private rides (UberX / Lyft Standard)"
+          tooltip="Trips with positive distance and duration, as defined by the backend"
         />
         <KPICard
-          title="Shared / Pool Rides"
-          value={`${sharedVsNonShared.shared.percentage}%`}
-          unit="Market Share"
-          trend="-64% post-pandemic"
-          trendType="down"
-          subtitle="Avg fare: $17.80 &bull; 27.6 min"
-          icon={Users}
-          accentColor="purple"
-          tooltip="Shared multiple-party rides (Uber Share / Lyft Shared)"
-        />
-        <KPICard
-          title="Uber Share (HV0003)"
-          value={`${serviceProviders[0].marketShare}%`}
-          unit="13.2M Trips"
-          trend="Avg Speed: 11.8 mph"
-          trendType="neutral"
-          subtitle="Base driver pay: $19.60"
+          title="Average Distance"
+          value={formatNumber(summary?.average_distance_miles)}
+          unit="miles"
+          subtitle="Across valid trips"
           icon={Navigation}
           accentColor="blue"
-          tooltip="Uber Technologies license HV0003 volume and operational metrics"
         />
         <KPICard
-          title="Lyft Share (HV0005)"
-          value={`${serviceProviders[1].marketShare}%`}
-          unit="5.29M Trips"
-          trend="Avg Speed: 12.1 mph"
-          trendType="neutral"
-          subtitle="Base driver pay: $18.95"
-          icon={Compass}
+          title="Average Duration"
+          value={formatNumber(summary?.average_duration_minutes)}
+          unit="minutes"
+          subtitle="Across valid trips"
+          icon={Clock}
           accentColor="emerald"
-          tooltip="Lyft Inc. license HV0005 volume and operational metrics"
+        />
+        <KPICard
+          title="Median Distance"
+          value={formatNumber(summary?.median_distance_miles)}
+          unit="miles"
+          subtitle={`Median duration: ${formatNumber(summary?.median_duration_minutes)} min`}
+          icon={Compass}
+          accentColor="purple"
         />
       </div>
 
-      {/* Time-of-Day Travel Patterns */}
+      {/* Hourly Travel Patterns */}
       <ChartCard
-        title="Time-of-Day Mobility Patterns"
-        subtitle="Comparing trip volume, average travel distance, duration, and speed across diurnal periods"
+        title="Hourly Mobility Patterns"
+        subtitle="Valid trip volume by pickup hour; average duration and distance are available in the tooltip"
         icon={Clock}
-        badge={<Badge variant="primary" size="xs">Diurnal Breakdown</Badge>}
+        badge={<Badge variant="primary" size="xs">24-Hour Breakdown</Badge>}
       >
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {timePeriods.map((p, idx) => (
-            <div
-              key={idx}
-              className="p-4 rounded-xl bg-slate-900/60 border border-slate-800/80 hover:border-slate-700 transition-colors"
-            >
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-bold text-slate-200">{p.period}</span>
-                <span className="text-[10px] px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-400 font-mono">
-                  {p.percentage}
-                </span>
-              </div>
-              <div className="text-xl font-extrabold text-white font-mono mt-1">
-                {(p.trips / 1000000).toFixed(2)}M trips
-              </div>
-
-              <div className="mt-3 pt-3 border-t border-slate-800/60 space-y-1.5 text-xs font-mono">
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Avg Distance:</span>
-                  <span className="text-cyan-300 font-semibold">{p.avgDistance} mi</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Avg Duration:</span>
-                  <span className="text-indigo-300 font-semibold">{p.avgDuration} min</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Avg Fare:</span>
-                  <span className="text-emerald-400 font-semibold">${p.avgFare.toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Avg Speed:</span>
-                  <span className="text-amber-300 font-semibold">{p.avgSpeed} mph</span>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
+        {hourly.length === 0 ? (
+          <div className="h-64 flex items-center justify-center text-sm text-slate-400">
+            Hourly travel data is not available.
+          </div>
+        ) : (
+          <div className="w-full h-[300px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={hourly} margin={{ top: 10, right: 20, left: 10, bottom: 5 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#1f2d42" vertical={false} />
+                <XAxis
+                  dataKey="pickup_hour"
+                  stroke="#64748b"
+                  tick={{ fill: '#94a3b8', fontSize: 11 }}
+                  tickFormatter={(hour) => `${hour}:00`}
+                />
+                <YAxis
+                  stroke="#64748b"
+                  tick={{ fill: '#94a3b8', fontSize: 11 }}
+                  tickFormatter={formatCount}
+                />
+                <Tooltip
+                  content={({ active, payload, label }) => {
+                    if (active && payload && payload.length) {
+                      const item = payload[0]?.payload;
+                      if (!item) return null;
+                      return (
+                        <div className="rounded-xl bg-[#0d1322] border border-slate-700 p-2.5 text-xs font-mono">
+                          <div className="font-bold text-white">{label}:00</div>
+                          <div className="text-cyan-400">Trips: {formatCount(item.total_trips)}</div>
+                          <div className="text-indigo-300">
+                            Avg Duration: {formatNumber(item.avg_duration_minutes)} min
+                          </div>
+                          <div className="text-slate-400">
+                            Avg Distance: {formatNumber(item.avg_distance_miles)} mi
+                          </div>
+                        </div>
+                      );
+                    }
+                    return null;
+                  }}
+                />
+                <Bar dataKey="total_trips" name="total_trips" fill="#0ea5e9" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        )}
       </ChartCard>
 
-      {/* Distribution Histograms Section */}
+      {/* Trip Summary and Borough Comparison */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Toggleable Distribution Chart */}
+        {/* Toggleable Trip Summary Chart */}
         <div className="lg:col-span-7">
           <ChartCard
             title={
               distTab === 'distance'
-                ? 'Trip Distance Distribution (Miles)'
+                ? 'Trip Distance Summary (Miles)'
                 : distTab === 'duration'
-                ? 'Trip Duration Distribution (Minutes)'
-                : 'Passenger Fare Distribution (USD)'
+                ? 'Trip Duration Summary (Minutes)'
+                : 'Passenger Fare'
             }
-            subtitle="Frequency histogram binned from 18.5M raw telemetry events"
+            subtitle={
+              distTab === 'fare'
+                ? 'Fare metrics are not included in the available backend response.'
+                : 'Backend-provided average, median, minimum, and maximum values'
+            }
             icon={Layers}
             action={
               <div className="flex rounded-lg bg-slate-900 border border-slate-800 p-0.5 text-xs">
@@ -241,131 +299,172 @@ export const TravelBehaviour = () => {
               </div>
             }
           >
-            {distTab === 'distance' && (
-              <DistributionChart
-                data={distanceDistribution}
-                dataKey="count"
-                nameKey="range"
-                fillColor="#0ea5e9"
-                unit="trips"
-                height={280}
-              />
-            )}
-            {distTab === 'duration' && (
-              <DistributionChart
-                data={durationDistribution}
-                dataKey="count"
-                nameKey="range"
-                fillColor="#6366f1"
-                unit="trips"
-                height={280}
-              />
-            )}
-            {distTab === 'fare' && (
-              <DistributionChart
-                data={fareDistribution}
-                dataKey="count"
-                nameKey="range"
-                fillColor="#10b981"
-                unit="trips"
-                height={280}
-              />
+            {distTab === 'fare' ? (
+              <div className="h-[280px] flex items-center justify-center text-sm text-slate-400">
+                Not yet implemented: fare data is not provided by the travel behaviour API.
+              </div>
+            ) : summaryChartData.length === 0 ? (
+              <div className="h-[280px] flex items-center justify-center text-sm text-slate-400">
+                {distTab === 'distance' ? 'Distance' : 'Duration'} summary data is not available.
+              </div>
+            ) : (
+              <div className="w-full h-[280px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={summaryChartData} margin={{ top: 10, right: 10, left: 10, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#1f2d42" vertical={false} />
+                    <XAxis
+                      dataKey="metric"
+                      stroke="#64748b"
+                      tick={{ fill: '#94a3b8', fontSize: 11 }}
+                    />
+                    <YAxis
+                      stroke="#64748b"
+                      tick={{ fill: '#94a3b8', fontSize: 11 }}
+                      tickFormatter={(value) => formatNumber(value)}
+                    />
+                    <Tooltip
+                      formatter={(value) => [
+                        `${formatNumber(value)} ${distTab === 'distance' ? 'miles' : 'minutes'}`,
+                        distTab === 'distance' ? 'Distance' : 'Duration'
+                      ]}
+                      contentStyle={{
+                        backgroundColor: '#0d1322',
+                        border: '1px solid #334155',
+                        borderRadius: '0.75rem',
+                        color: '#e2e8f0'
+                      }}
+                    />
+                    <Bar
+                      dataKey="value"
+                      name="Value"
+                      fill={distTab === 'distance' ? '#0ea5e9' : '#6366f1'}
+                      radius={[4, 4, 0, 0]}
+                      maxBarSize={56}
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
             )}
           </ChartCard>
         </div>
 
-        {/* Average Duration by High-Density Hubs */}
+        {/* Average Duration by Borough */}
         <div className="lg:col-span-5">
           <ChartCard
-            title="Trip Duration by Hub Zone"
-            subtitle="Comparing average travel minutes across top pickup origins"
+            title="Trip Duration by Borough"
+            subtitle="Comparing backend aggregates for valid trips by pickup borough"
             icon={Navigation}
-            badge={<Badge variant="amber" size="xs">Congestion Index</Badge>}
+            badge={<Badge variant="amber" size="xs">Pickup Borough</Badge>}
           >
-            <div className="w-full h-[280px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  layout="vertical"
-                  data={avgDurationByZone}
-                  margin={{ top: 5, right: 30, left: 40, bottom: 5 }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1f2d42" horizontal={false} />
-                  <XAxis type="number" stroke="#64748b" tick={{ fill: '#94a3b8', fontSize: 11 }} />
-                  <YAxis
-                    type="category"
-                    dataKey="zone"
-                    stroke="#64748b"
-                    tick={{ fill: '#94a3b8', fontSize: 10 }}
-                    width={110}
-                  />
-                  <Tooltip
-                    content={({ active, payload }) => {
-                      if (active && payload && payload.length) {
-                        const item = payload[0].payload;
-                        return (
-                          <div className="rounded-xl bg-[#0d1322] border border-slate-700 p-2.5 text-xs font-mono">
-                            <div className="font-bold text-white">{item.zone}</div>
-                            <div className="text-cyan-400">Avg Duration: {item.duration} min</div>
-                            <div className="text-slate-400">Avg Distance: {item.distance} mi</div>
-                          </div>
-                        );
-                      }
-                      return null;
-                    }}
-                  />
-                  <Bar dataKey="duration" fill="#38bdf8" radius={[0, 4, 4, 0]}>
-                    {avgDurationByZone.map((entry, index) => (
-                      <Cell
-                        key={`cell-${index}`}
-                        fill={entry.duration > 30 ? '#06b6d4' : '#1e293b'}
-                        stroke={entry.duration > 30 ? '#22d3ee' : '#334155'}
-                      />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
+            {boroughData.length === 0 ? (
+              <div className="h-[280px] flex items-center justify-center text-sm text-slate-400">
+                Borough travel data is not available.
+              </div>
+            ) : (
+              <div className="w-full h-[280px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart
+                    layout="vertical"
+                    data={boroughData}
+                    margin={{ top: 5, right: 30, left: 40, bottom: 5 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke="#1f2d42" horizontal={false} />
+                    <XAxis
+                      type="number"
+                      stroke="#64748b"
+                      tick={{ fill: '#94a3b8', fontSize: 11 }}
+                    />
+                    <YAxis
+                      type="category"
+                      dataKey="pickup_borough"
+                      stroke="#64748b"
+                      tick={{ fill: '#94a3b8', fontSize: 10 }}
+                      width={110}
+                    />
+                    <Tooltip
+                      content={({ active, payload }) => {
+                        if (active && payload && payload.length) {
+                          const item = payload[0]?.payload;
+                          if (!item) return null;
+                          return (
+                            <div className="rounded-xl bg-[#0d1322] border border-slate-700 p-2.5 text-xs font-mono">
+                              <div className="font-bold text-white">{item.pickup_borough}</div>
+                              <div className="text-cyan-400">
+                                Avg Duration: {formatNumber(item.avg_duration_minutes)} min
+                              </div>
+                              <div className="text-slate-400">
+                                Avg Distance: {formatNumber(item.avg_distance_miles)} mi
+                              </div>
+                              <div className="text-slate-400">
+                                Trips: {formatCount(item.total_trips)}
+                              </div>
+                            </div>
+                          );
+                        }
+                        return null;
+                      }}
+                    />
+                    <Bar dataKey="avg_duration_minutes" fill="#38bdf8" radius={[0, 4, 4, 0]}>
+                      {boroughData.map((entry, index) => (
+                        <Cell
+                          key={`cell-${index}`}
+                          fill={Number(entry.avg_duration_minutes) > 30 ? '#06b6d4' : '#1e293b'}
+                          stroke={Number(entry.avg_duration_minutes) > 30 ? '#22d3ee' : '#334155'}
+                        />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
           </ChartCard>
         </div>
       </div>
 
-      {/* Service Provider Comparison Table */}
+      {/* Weekday and Weekend Comparison */}
       <ChartCard
-        title="Service Provider Operational Breakdown"
-        subtitle="Comparing high-volume for-hire vehicle licensees operating in NYC"
-        icon={Car}
-        badge={<Badge variant="primary" size="xs">TLC HVFHV Operators</Badge>}
+        title="Weekday vs Weekend Travel"
+        subtitle="Trip totals and average daily trips from the January 2025 dataset"
+        icon={Clock}
+        badge={<Badge variant="primary" size="xs">Day Type</Badge>}
       >
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
             <thead>
               <tr className="border-b border-slate-800 text-slate-400 font-semibold uppercase text-[11px]">
-                <th className="py-3 px-4">License</th>
-                <th className="py-3 px-4">Operator Name</th>
-                <th className="py-3 px-4 text-right">Trip Count</th>
-                <th className="py-3 px-4 text-right">Market Share</th>
-                <th className="py-3 px-4 text-right">Avg Passenger Fare</th>
-                <th className="py-3 px-4 text-right">Driver Pay</th>
-                <th className="py-3 px-4 text-right">Avg Speed</th>
-                <th className="py-3 px-4 text-right">Shared Ride Rate</th>
+                <th className="py-3 px-4">Day Type</th>
+                <th className="py-3 px-4 text-right">Days in Dataset</th>
+                <th className="py-3 px-4 text-right">Total Trips</th>
+                <th className="py-3 px-4 text-right">Average Trips / Day</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60 font-mono">
-              {serviceProviders.map((sp) => (
-                <tr key={sp.licenseNumber} className="hover:bg-slate-800/40 transition-colors">
-                  <td className="py-3 px-4 text-cyan-400 font-bold">{sp.licenseNumber}</td>
-                  <td className="py-3 px-4 font-sans font-bold text-slate-200">{sp.provider}</td>
-                  <td className="py-3 px-4 text-right text-slate-100 font-bold">{sp.trips.toLocaleString()}</td>
-                  <td className="py-3 px-4 text-right text-cyan-300 font-bold">{sp.marketShare}%</td>
-                  <td className="py-3 px-4 text-right text-emerald-400 font-bold">${sp.avgFare.toFixed(2)}</td>
-                  <td className="py-3 px-4 text-right text-slate-300">${sp.avgDriverPay.toFixed(2)}</td>
-                  <td className="py-3 px-4 text-right text-amber-300">{sp.avgSpeed} mph</td>
-                  <td className="py-3 px-4 text-right text-purple-300">{sp.sharedRideRate}%</td>
+              {weekdayWeekend.length === 0 ? (
+                <tr>
+                  <td colSpan="4" className="py-6 px-4 text-center text-slate-400">
+                    Weekday/weekend data is not available.
+                  </td>
+                </tr>
+              ) : weekdayWeekend.map((item) => (
+                <tr key={item.day_type} className="hover:bg-slate-800/40 transition-colors">
+                  <td className="py-3 px-4 text-cyan-400 font-bold">{item.day_type || 'Not available'}</td>
+                  <td className="py-3 px-4 text-right text-slate-300">
+                    {formatCount(item.number_of_days)}
+                  </td>
+                  <td className="py-3 px-4 text-right text-slate-100 font-bold">
+                    {formatCount(item.total_trips)}
+                  </td>
+                  <td className="py-3 px-4 text-right text-indigo-300 font-bold">
+                    {formatCount(item.average_trips_per_day)}
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
+        <p className="mt-4 text-xs text-slate-400">
+          Provider-level and shared-ride metrics (market share, fares, driver pay, speed, and ride type) are not available in the current backend response.
+        </p>
       </ChartCard>
     </div>
   );

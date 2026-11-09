@@ -172,7 +172,7 @@ export const DemandIntelligence = () => {
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={dailyData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#1f2d42" vertical={false} />
-                  <XAxis dataKey="day" stroke="#64748b" tick={{ fill: '#94a3b8', fontSize: 11 }} />
+                  <XAxis dataKey="day_name" stroke="#64748b" tick={{ fill: '#94a3b8', fontSize: 11 }} />
                   <YAxis stroke="#64748b" tick={{ fill: '#94a3b8', fontSize: 11 }} tickFormatter={(v) => `${(v/1000000).toFixed(1)}M`} />
                   <Tooltip
                     content={({ active, payload, label }) => {
@@ -181,8 +181,8 @@ export const DemandIntelligence = () => {
                         return (
                           <div className="rounded-xl bg-[#0d1322] border border-slate-700 p-3 shadow-xl text-xs font-mono">
                             <p className="font-bold text-slate-100 font-sans mb-1">{label}</p>
-                            <div className="text-cyan-400">Trips: {item.trips.toLocaleString()}</div>
-                            <div className="text-emerald-400">Avg Fare: ${item.avgFare.toFixed(2)}</div>
+                            <div className="text-cyan-400">Trips: {(item.total_trips ?? 0).toLocaleString()}</div>
+                            <div className="text-slate-400">Average fare: Not available</div>
                             <div className="text-slate-400">Avg Duration: {item.avgDuration} min</div>
                           </div>
                         );
@@ -190,7 +190,7 @@ export const DemandIntelligence = () => {
                       return null;
                     }}
                   />
-                  <Bar dataKey="trips" fill="#3b82f6" radius={[4, 4, 0, 0]}>
+                  <Bar dataKey="total_trips" fill="#3b82f6" radius={[4, 4, 0, 0]}>
                     {dailyData.map((d, index) => (
                       <Cell
                         key={`cell-${index}`}
@@ -262,11 +262,11 @@ export const DemandIntelligence = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60 font-mono">
-              {activeZoneList.map((z) => (
+              {(activeZoneList ?? []).map((z, index) => (
                 <tr key={z.id} className="hover:bg-slate-800/40 transition-colors">
                   <td className="py-3 px-3">
                     <span className="w-5 h-5 rounded bg-slate-800 text-cyan-400 font-bold inline-flex items-center justify-center text-[10px]">
-                      {z.rank}
+                      {index + 1}
                     </span>
                   </td>
                   <td className="py-3 px-3 text-slate-500">#{z.id}</td>
@@ -276,9 +276,9 @@ export const DemandIntelligence = () => {
                       {z.borough}
                     </span>
                   </td>
-                  <td className="py-3 px-3 text-right text-slate-100 font-bold">{z.trips.toLocaleString()}</td>
+                  <td className="py-3 px-3 text-right text-slate-100 font-bold">{(z.total_pickups ?? 0).toLocaleString()}</td>
                   <td className="py-3 px-3 text-right text-cyan-400 font-medium">{z.share}</td>
-                  <td className="py-3 px-3 text-right text-emerald-400 font-bold">${z.avgFare.toFixed(2)}</td>
+                  <td className="py-3 px-3 text-right text-slate-400">Not available</td>
                 </tr>
               ))}
             </tbody>

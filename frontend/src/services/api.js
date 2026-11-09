@@ -2,14 +2,12 @@ import axios from 'axios';
 import {
   OVERVIEW_DATA,
   DEMAND_DATA,
-  BEHAVIOUR_DATA,
   ANOMALY_DATA,
-  FORECAST_DATA
 } from '../data/mockData';
 import { TAXI_ZONES, POPULAR_ROUTES } from '../data/nycGeoData';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
-const USE_MOCK_FALLBACK = import.meta.env.VITE_USE_MOCK_DATA !== 'false';
+const USE_MOCK_FALLBACK = import.meta.env.VITE_USE_MOCK_DATA === 'true';
 
 export const apiClient = axios.create({
   baseURL: BASE_URL,
@@ -38,7 +36,7 @@ export const mobilityApi = {
   // Health check to detect if FastAPI is online
   async checkHealth() {
     try {
-      const response = await apiClient.get('/api/health');
+      const response = await apiClient.get('/health');
       return { online: true, data: response.data };
     } catch {
       return { online: false, message: 'FastAPI Spark Backend Offline (Operating in Mock Demonstration Mode)' };
@@ -47,18 +45,9 @@ export const mobilityApi = {
 
   // PAGE 1: Overview
   async getOverview(params = {}) {
-    if (USE_MOCK_FALLBACK) {
-      await delay(200);
-      return OVERVIEW_DATA;
-    }
-    try {
-      const res = await apiClient.get('/api/overview', { params });
-      return res.data;
-    } catch (err) {
-      console.warn('[API] /api/overview call failed, using mock data:', err.message);
-      return OVERVIEW_DATA;
-    }
-  },
+  const res = await apiClient.get('/api/overview', { params });
+  return res.data;
+},
 
   // PAGE 2: Demand - Hourly
   async getDemandHourly(params = {}) {
@@ -77,41 +66,37 @@ export const mobilityApi = {
 
   // PAGE 2: Demand - Daily
   async getDemandDaily(params = {}) {
-    if (USE_MOCK_FALLBACK) {
-      await delay(200);
-      return DEMAND_DATA.dailyDemand;
-    }
-    try {
-      const res = await apiClient.get('/api/demand/daily', { params });
-      return res.data;
-    } catch (err) {
-      console.warn('[API] /api/demand/daily call failed, using mock data:', err.message);
-      return DEMAND_DATA.dailyDemand;
-    }
+  const res = await apiClient.get('/api/demand/daily', { params });
+  return res.data;
+},
+
+  async getHistoricalDemand() {
+    const [hourlyRes, dailyRes, boroughRes] = await Promise.all([
+      apiClient.get('/api/demand/hourly'),
+      apiClient.get('/api/demand/daily'),
+      apiClient.get('/api/demand/boroughs')
+    ]);
+
+    return {
+      hourlyDemand: hourlyRes.data,
+      dailyDemand: dailyRes.data,
+      boroughDemand: boroughRes.data
+    };
   },
 
   // PAGE 2: Demand - Zones
   async getDemandZones(params = {}) {
-    if (USE_MOCK_FALLBACK) {
-      await delay(200);
-      return {
-        topPickupZones: DEMAND_DATA.topPickupZones,
-        topDropoffZones: DEMAND_DATA.topDropoffZones,
-        boroughDemand: DEMAND_DATA.boroughDemand,
-      };
-    }
-    try {
-      const res = await apiClient.get('/api/demand/zones', { params });
-      return res.data;
-    } catch (err) {
-      console.warn('[API] /api/demand/zones call failed, using mock data:', err.message);
-      return {
-        topPickupZones: DEMAND_DATA.topPickupZones,
-        topDropoffZones: DEMAND_DATA.topDropoffZones,
-        boroughDemand: DEMAND_DATA.boroughDemand,
-      };
-    }
-  },
+  const [zonesRes, boroughsRes] = await Promise.all([
+    apiClient.get('/api/demand/top-zones', { params }),
+    apiClient.get('/api/demand/boroughs', { params }),
+  ]);
+
+  return {
+    topPickupZones: zonesRes.data,
+    boroughDemand: boroughsRes.data,
+    topDropoffZones: [],
+  };
+},
 
   // PAGE 3: Mobility Routes
   async getMobilityRoutes(params = {}) {
@@ -130,36 +115,46 @@ export const mobilityApi = {
 
   // PAGE 3: Geo Hotspots
   async getGeoHotspots(params = {}) {
-    if (USE_MOCK_FALLBACK) {
-      await delay(250);
-      let zones = [...TAXI_ZONES];
-      if (params.borough && params.borough !== 'all') {
-        zones = zones.filter(z => z.borough.toLowerCase() === params.borough.toLowerCase());
-      }
-      return zones;
-    }
-    try {
-      const res = await apiClient.get('/api/geo/hotspots', { params });
-      return res.data;
-    } catch (err) {
-      console.warn('[API] /api/geo/hotspots call failed, using mock data:', err.message);
-      return TAXI_ZONES;
-    }
+    return TAXI_ZONES
+      .filter((zone) =>
+        (!params.borough || params.borough === 'all' ||
+          zone.borough.toLowerCase() === params.borough.toLowerCase()) &&
+        Number.isFinite(zone.lat) &&
+        Number.isFinite(zone.lng) &&
+        zone.lat >= -90 &&
+        zone.lat <= 90 &&
+        zone.lng >= -180 &&
+        zone.lng <= 180
+      )
+      .map(({ id, name, borough, lat, lng, type }) => ({
+        id,
+        name,
+        borough,
+        lat,
+        lng,
+        type
+      }));
   },
 
   // PAGE 4: Travel Behaviour
   async getBehaviour(params = {}) {
-    if (USE_MOCK_FALLBACK) {
-      await delay(200);
-      return BEHAVIOUR_DATA;
-    }
-    try {
-      const res = await apiClient.get('/api/behaviour', { params });
-      return res.data;
-    } catch (err) {
-      console.warn('[API] /api/behaviour call failed, using mock data:', err.message);
-      return BEHAVIOUR_DATA;
-    }
+    const res = await apiClient.get('/api/behaviour/summary', { params });
+    return Array.isArray(res.data) ? res.data[0] ?? null : res.data;
+  },
+
+  async getBehaviourByBorough(params = {}) {
+    const res = await apiClient.get('/api/behaviour/by-borough', { params });
+    return res.data;
+  },
+
+  async getBehaviourByHour(params = {}) {
+    const res = await apiClient.get('/api/behaviour/duration-by-hour', { params });
+    return res.data;
+  },
+
+  async getWeekdayWeekend(params = {}) {
+    const res = await apiClient.get('/api/demand/weekday-weekend', { params });
+    return res.data;
   },
 
   // PAGE 5: Anomaly Detection
@@ -177,20 +172,6 @@ export const mobilityApi = {
     }
   },
 
-  // PAGE 6: Demand Forecasting
-  async getForecast(params = {}) {
-    if (USE_MOCK_FALLBACK) {
-      await delay(250);
-      return FORECAST_DATA;
-    }
-    try {
-      const res = await apiClient.get('/api/forecast', { params });
-      return res.data;
-    } catch (err) {
-      console.warn('[API] /api/forecast call failed, using mock data:', err.message);
-      return FORECAST_DATA;
-    }
-  }
 };
 
 export default mobilityApi;

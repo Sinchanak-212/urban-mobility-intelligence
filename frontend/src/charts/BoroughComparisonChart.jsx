@@ -81,7 +81,7 @@ export const BoroughComparisonChart = ({ data }) => {
             </div>
             <div className="text-right font-mono">
               <span className="text-slate-100 font-bold">{b.percentage}%</span>
-              <span className="text-emerald-400 text-[11px] block">${b.avgFare.toFixed(2)}</span>
+              <span className="text-slate-400 text-[11px] block">Fare unavailable</span>
             </div>
           </div>
         ))}

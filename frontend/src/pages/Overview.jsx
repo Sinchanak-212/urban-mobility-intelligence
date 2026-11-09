@@ -1,19 +1,16 @@
-import React, { useState, useEffect } from 'react';
+
+import React, { useEffect, useState } from 'react';
 import {
-  TrendingUp,
+  Car,
   MapPin,
   Clock,
-  DollarSign,
-  Car,
-  Layers,
-  ArrowUpRight,
+  Route,
   Flame,
-  CheckCircle,
-  Cpu,
   BarChart2,
-  Calendar,
-  Sparkles
+  Sparkles,
+  Cpu
 } from 'lucide-react';
+
 import KPICard from '../components/KPICard';
 import ChartCard from '../components/ChartCard';
 import Loading from '../components/Loading';
@@ -22,41 +19,50 @@ import Badge from '../components/Badge';
 import DailyTrendChart from '../charts/DailyTrendChart';
 import mobilityApi from '../services/api';
 import { useAnalytics } from '../context/AnalyticsContext';
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-  Cell
-} from 'recharts';
+
+const formatNumber = (value) =>
+  Number(value || 0).toLocaleString('en-US');
 
 export const Overview = () => {
   const { dateRange, borough, provider, refreshKey } = useAnalytics();
+
   const [data, setData] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [activeTab, setActiveTab] = useState('daily'); // 'daily' | 'monthly'
 
   useEffect(() => {
     let isMounted = true;
-    setIsLoading(true);
-    setError(null);
 
-    mobilityApi.getOverview({ dateRange, borough, provider })
-      .then((res) => {
+    const loadOverview = async () => {
+      setIsLoading(true);
+      setError(null);
+
+      try {
+        const [overview, dailyTrips, zones, behaviour] = await Promise.all([
+          mobilityApi.getOverview({ dateRange, borough, provider }),
+          mobilityApi.getDemandDaily({ dateRange, borough, provider }),
+          mobilityApi.getDemandZones({ dateRange, borough, provider }),
+          mobilityApi.getBehaviour({ dateRange, borough, provider })
+        ]);
+
         if (isMounted) {
-          setData(res);
-          setIsLoading(false);
+          setData({
+            overview,
+            dailyTrips,
+            topPickupZones: zones.topPickupZones || [],
+            behaviour
+          });
         }
-      })
-      .catch((err) => {
+      } catch (err) {
         if (isMounted) {
-          setError(err.message);
-          setIsLoading(false);
+          setError(err.message || 'Unable to load dashboard analytics.');
         }
-      });
+      } finally {
+        if (isMounted) setIsLoading(false);
+      }
+    };
+
+    loadOverview();
 
     return () => {
       isMounted = false;
@@ -64,267 +70,199 @@ export const Overview = () => {
   }, [dateRange, borough, provider, refreshKey]);
 
   if (isLoading && !data) {
-    return <Loading message="Initializing PySpark cluster analytics and aggregating 18.5M trip records..." />;
+    return <Loading message="Loading January 2025 mobility analytics..." />;
   }
 
   if (error && !data) {
     return <ErrorState message={error} onRetry={() => window.location.reload()} />;
   }
 
-  const { kpis, kpiTrends, dailyTrips, monthlyTrends, topFivePickupZones, insights } = data;
+  if (!data) return null;
+
+  const { overview, dailyTrips, topPickupZones, behaviour } = data;
+
+  const highestDemandDay = [...dailyTrips].sort(
+    (a, b) => b.total_trips - a.total_trips
+  )[0];
+
+  const busiestZone = topPickupZones[0];
 
   return (
     <div className="space-y-6">
-      {/* Page Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-slate-800/80">
+
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-800/80">
         <div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
               Overview Dashboard
             </h1>
             <Badge variant="primary" size="sm">
-              Partition: Oct 2024
+              {overview.period || 'January 2025'}
             </Badge>
           </div>
+
           <p className="text-sm text-slate-400 mt-1">
-            Macro-level performance, volume distributions, and distributed analytics from NYC High Volume For-Hire Vehicle trips.
+            Large-scale mobility analytics from NYC High Volume For-Hire Vehicle trips.
           </p>
         </div>
 
-        {/* Distributed Processing Tag */}
-        <div className="flex items-center gap-3">
-          <div className="px-3.5 py-1.5 rounded-xl bg-slate-900/90 border border-slate-800 text-xs font-mono text-slate-300 flex items-center gap-2">
-            <Cpu className="w-4 h-4 text-cyan-400 animate-pulse" />
-            <span>Spark Aggregation: <strong className="text-cyan-400">{kpis.sparkExecutionTimeSec}s</strong></span>
-          </div>
+        <div className="px-3.5 py-2 rounded-xl bg-slate-900/90 border border-slate-800 text-xs font-mono text-slate-300 flex items-center gap-2">
+          <Cpu className="w-4 h-4 text-cyan-400" />
+          <span>Backend: <strong className="text-emerald-400">Connected</strong></span>
         </div>
       </div>
 
-      {/* KPI Cards Grid (6 main KPIs required) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
-        {/* KPI 1: Total Trips */}
+      {/* KPI Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+
         <KPICard
           title="Total Trips"
-          value={kpis.totalTripsDisplay}
-          trend={kpiTrends.trips}
-          trendType="up"
-          subtitle="Processed HVFHV volume"
+          value={formatNumber(overview.total_trips)}
+          subtitle="January 2025 trip records"
           icon={Car}
           accentColor="cyan"
-          tooltip="Total valid trip records indexed across the distributed PySpark parquet cluster"
+          tooltip="Total records in the NYC TLC HVFHV dataset."
         />
 
-        {/* KPI 2: Average Distance */}
         <KPICard
-          title="Avg Trip Distance"
-          value={kpis.avgDistance}
+          title="Average Distance"
+          value={Number(behaviour.average_distance_miles).toFixed(2)}
           unit="miles"
-          trend={kpiTrends.distance}
-          trendType="down"
-          subtitle="Median: 3.12 miles"
+          subtitle={`Median: ${Number(behaviour.median_distance_miles).toFixed(2)} miles`}
           icon={MapPin}
           accentColor="blue"
-          tooltip="Average highway and arterial distance calculated per trip log"
         />
 
-        {/* KPI 3: Average Duration */}
         <KPICard
-          title="Avg Trip Duration"
-          value={kpis.avgDuration}
-          unit="mins"
-          trend={kpiTrends.duration}
-          trendType="up"
-          subtitle="Peak: 27.8 mins"
+          title="Average Duration"
+          value={Number(behaviour.average_duration_minutes).toFixed(2)}
+          unit="minutes"
+          subtitle={`Median: ${Number(behaviour.median_duration_minutes).toFixed(2)} minutes`}
           icon={Clock}
           accentColor="indigo"
-          tooltip="Time elapsed between pickup telematics registration and passenger dropoff"
         />
 
-        {/* KPI 4: Average Passenger Fare */}
         <KPICard
-          title="Avg Passenger Fare"
-          value={`$${kpis.avgFare.toFixed(2)}`}
-          trend={kpiTrends.fare}
-          trendType="up"
-          subtitle="Base pay: $19.42"
-          icon={DollarSign}
+          title="Valid Trips"
+          value={formatNumber(behaviour.valid_trips)}
+          subtitle="Records used for travel statistics"
+          icon={Route}
           accentColor="emerald"
-          tooltip="Total passenger expenditure including base rate, tips, congestion and state surcharges"
         />
 
-        {/* KPI 5: Total Pickup Locations */}
-        <KPICard
-          title="Pickup Zones"
-          value={kpis.totalPickupLocations}
-          unit="TLC Zones"
-          trend="100% active"
-          subtitle="All 5 boroughs"
-          icon={Layers}
-          accentColor="purple"
-          tooltip="Active TLC geographic taxi zone centroids with pickup trip origin records"
-        />
-
-        {/* KPI 6: Total Dropoff Locations */}
-        <KPICard
-          title="Dropoff Zones"
-          value={kpis.totalDropoffLocations}
-          unit="TLC Zones"
-          trend="99.2% active"
-          subtitle="2 NJ connector zones"
-          icon={ArrowUpRight}
-          accentColor="amber"
-          tooltip="TLC taxi zones receiving passenger dropoff completions"
-        />
       </div>
 
-      {/* Primary Analytics Charts Section */}
+      {/* Daily Demand and Top Pickup Zones */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left 2 Cols: Daily / Monthly Trends Chart */}
+
         <div className="lg:col-span-2">
           <ChartCard
-            title={activeTab === 'daily' ? 'Daily Trip Volume & Average Fare' : 'Monthly Historical Trip Trend (Millions)'}
-            subtitle={
-              activeTab === 'daily'
-                ? '30-day temporal trend illustrating weekend surge patterns and fare adjustments'
-                : '12-month seasonality trends based on historical TLC archives'
-            }
+            title="Daily Trip Volume"
+            subtitle="Trip distribution by day of the week — January 2025"
             icon={BarChart2}
-            badge={<Badge variant="primary" size="xs">Spark SQL Aggregate</Badge>}
-            action={
-              <div className="flex rounded-lg bg-slate-900 border border-slate-800 p-0.5 text-xs">
-                <button
-                  onClick={() => setActiveTab('daily')}
-                  className={`px-3 py-1 rounded-md font-medium transition-all ${
-                    activeTab === 'daily'
-                      ? 'bg-cyan-500 text-slate-900 font-semibold shadow-sm'
-                      : 'text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  Daily (30D)
-                </button>
-                <button
-                  onClick={() => setActiveTab('monthly')}
-                  className={`px-3 py-1 rounded-md font-medium transition-all ${
-                    activeTab === 'monthly'
-                      ? 'bg-cyan-500 text-slate-900 font-semibold shadow-sm'
-                      : 'text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  Monthly (12M)
-                </button>
-              </div>
-            }
+            badge={<Badge variant="primary" size="xs">Spark SQL Analytics</Badge>}
           >
-            {activeTab === 'daily' ? (
-              <DailyTrendChart data={dailyTrips} />
-            ) : (
-              <div className="w-full h-80">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={monthlyTrends} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
-                    <XAxis dataKey="month" stroke="#64748b" tick={{ fill: '#94a3b8', fontSize: 11 }} />
-                    <YAxis stroke="#64748b" tick={{ fill: '#94a3b8', fontSize: 11 }} tickFormatter={(v) => `${v}M`} />
-                    <Tooltip
-                      content={({ active, payload, label }) => {
-                        if (active && payload && payload.length) {
-                          const item = payload[0].payload;
-                          return (
-                            <div className="rounded-xl bg-[#0d1322] border border-slate-700 p-3 shadow-xl text-xs font-mono">
-                              <p className="font-bold text-slate-100">{label}</p>
-                              <div className="text-cyan-400">Trips: {item.trips} Million</div>
-                              <div className="text-emerald-400">Avg Fare: ${item.avgFare.toFixed(2)}</div>
-                              <div className="text-slate-400">YoY Growth: {item.growth}</div>
-                            </div>
-                          );
-                        }
-                        return null;
-                      }}
-                    />
-                    <Bar dataKey="trips" fill="#0ea5e9" radius={[4, 4, 0, 0]}>
-                      {monthlyTrends.map((entry, index) => (
-                        <Cell
-                          key={`cell-${index}`}
-                          fill={entry.month === 'Oct' ? '#06b6d4' : '#1e293b'}
-                          stroke={entry.month === 'Oct' ? '#38bdf8' : '#334155'}
-                        />
-                      ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            )}
+            <DailyTrendChart data={dailyTrips} />
           </ChartCard>
         </div>
 
-        {/* Right 1 Col: Top 5 Busiest Pickup Zones */}
         <div className="lg:col-span-1">
           <ChartCard
             title="Top 5 Pickup Zones"
-            subtitle="Ranked by total monthly passenger pickups"
+            subtitle="Ranked by total pickups"
             icon={Flame}
-            badge={<Badge variant="amber" size="xs">High Density</Badge>}
+            badge={<Badge variant="amber" size="xs">High Demand</Badge>}
           >
             <div className="space-y-3">
-              {topFivePickupZones.map((zone) => (
+              {topPickupZones.slice(0, 5).map((zone, index) => (
                 <div
-                  key={zone.id}
-                  className="p-3 rounded-xl bg-slate-900/60 border border-slate-800/80 hover:border-slate-700 transition-colors"
+                  key={`${zone.pickup_borough}-${zone.pickup_zone}`}
+                  className="p-3 rounded-xl bg-slate-900/60 border border-slate-800/80"
                 >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="w-5 h-5 rounded-md bg-slate-800 flex items-center justify-center font-mono text-[10px] text-cyan-400 font-bold">
-                        #{zone.rank}
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="w-6 h-6 shrink-0 rounded-md bg-slate-800 flex items-center justify-center font-mono text-xs text-cyan-400 font-bold">
+                        {index + 1}
                       </span>
-                      <div>
-                        <h4 className="text-xs font-bold text-slate-100 truncate max-w-[160px]">
-                          {zone.name}
+
+                      <div className="min-w-0">
+                        <h4 className="text-xs font-bold text-slate-100 truncate">
+                          {zone.pickup_zone}
                         </h4>
-                        <span className="text-[10px] text-slate-400">{zone.borough}</span>
+                        <span className="text-[10px] text-slate-400">
+                          {zone.pickup_borough}
+                        </span>
                       </div>
                     </div>
-                    <div className="text-right font-mono">
-                      <div className="text-xs font-extrabold text-white">{zone.trips}</div>
-                      <div className="text-[10px] text-cyan-400">{zone.share} share</div>
-                    </div>
-                  </div>
-                  <div className="mt-2 pt-2 border-t border-slate-800/50 flex items-center justify-between text-[11px] text-slate-400 font-mono">
-                    <span>Avg Fare: <strong className="text-emerald-400">{zone.avgFare}</strong></span>
-                    <span className="text-emerald-400">{zone.trend}</span>
+
+                    <span className="text-xs font-mono font-bold text-white shrink-0">
+                      {formatNumber(zone.total_pickups)}
+                    </span>
                   </div>
                 </div>
               ))}
             </div>
           </ChartCard>
         </div>
+
       </div>
 
-      {/* Analytical Insights Grid */}
+      {/* Data-derived Insights */}
       <div>
         <div className="flex items-center gap-2 mb-3">
           <Sparkles className="w-4 h-4 text-cyan-400" />
           <h3 className="text-base font-semibold text-slate-100">
-            Recent Big Data Analytical Insights
+            Dataset Insights
           </h3>
-          <Badge variant="indigo" size="xs">PySpark Cluster Synthesis</Badge>
+          <Badge variant="indigo" size="xs">January 2025</Badge>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          {insights.map((item) => (
-            <div
-              key={item.id}
-              className="rounded-xl bg-slate-900/60 border border-slate-800 p-4 relative overflow-hidden group hover:border-slate-700 transition-all"
-            >
-              <div className="flex items-center justify-between mb-2">
-                <Badge variant={item.type === 'spark' ? 'emerald' : item.type === 'peak' ? 'rose' : 'primary'} size="xs">
-                  {item.badge}
-                </Badge>
-                <CheckCircle className="w-3.5 h-3.5 text-slate-600 group-hover:text-cyan-400 transition-colors" />
-              </div>
-              <h4 className="text-sm font-semibold text-slate-100 mb-1">{item.title}</h4>
-              <p className="text-xs text-slate-400 leading-relaxed">{item.description}</p>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+
+          {highestDemandDay && (
+            <div className="rounded-xl bg-slate-900/60 border border-slate-800 p-4">
+              <Badge variant="primary" size="xs">Highest Daily Demand</Badge>
+              <h4 className="text-lg font-bold text-white mt-2">
+                {highestDemandDay.day_name}
+              </h4>
+              <p className="text-sm text-slate-400 mt-1">
+                {formatNumber(highestDemandDay.total_trips)} trips
+              </p>
             </div>
-          ))}
+          )}
+
+          {busiestZone && (
+            <div className="rounded-xl bg-slate-900/60 border border-slate-800 p-4">
+              <Badge variant="amber" size="xs">Busiest Pickup Zone</Badge>
+              <h4 className="text-lg font-bold text-white mt-2">
+                {busiestZone.pickup_zone}
+              </h4>
+              <p className="text-sm text-slate-400 mt-1">
+                {formatNumber(busiestZone.total_pickups)} pickups · {busiestZone.pickup_borough}
+              </p>
+            </div>
+          )}
+
+          <div className="rounded-xl bg-slate-900/60 border border-slate-800 p-4">
+            <Badge variant="success" size="xs">Average Trip Distance</Badge>
+            <h4 className="text-lg font-bold text-white mt-2">
+              {Number(behaviour.average_distance_miles).toFixed(2)} miles
+            </h4>
+            <p className="text-sm text-slate-400 mt-1">
+              Median distance: {Number(behaviour.median_distance_miles).toFixed(2)} miles
+            </p>
+          </div>
+
         </div>
       </div>
+
+      {error && (
+        <p className="text-xs text-amber-400">
+          Some dashboard data could not be refreshed: {error}
+        </p>
+      )}
+
     </div>
   );
 };

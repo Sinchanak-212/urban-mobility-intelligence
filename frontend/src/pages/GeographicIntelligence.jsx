@@ -124,40 +124,40 @@ export const GeographicIntelligence = () => {
       {/* Map Stats Quick Summary */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <KPICard
-          title="Active Hotspot Zones"
+          title="TLC Zone Locations"
           value={zones.length}
-          unit="TLC Zones"
-          subtitle="Centroid telematics verified"
+          unit="centroids"
+          subtitle="Coordinate records available"
           icon={MapPin}
           accentColor="cyan"
-          tooltip="Total taxi zones in active view with verified pickup/dropoff GPS coordinates"
+          tooltip="TLC zone centroid coordinates available for display on the map"
         />
         <KPICard
-          title="Highest Volume Hub"
-          value="JFK Airport"
-          unit="34.2k Daily Pickups"
-          subtitle="Queens &bull; $68.50 avg fare"
+          title="Zone Boundaries"
+          value="Not available"
+          unit="Centroids only"
+          subtitle="Polygon geometry not loaded"
           icon={Compass}
           accentColor="blue"
-          tooltip="Zone with the largest single-point passenger generation in New York City"
+          tooltip="Only zone centroid coordinates are available in the frontend geographic reference"
         />
         <KPICard
-          title="Key O-D Corridors"
-          value={routes.length}
-          unit="Major Arteries"
-          subtitle="Inter & Intra-Borough"
+          title="Zone Demand Values"
+          value="Not available"
+          unit="Not provided"
+          subtitle="No zone-level metrics loaded"
           icon={Navigation}
           accentColor="indigo"
-          tooltip="Top transit corridors identified by Spark SQL origin-destination aggregation"
+          tooltip="The map has no verified zone-level demand statistics"
         />
         <KPICard
-          title="Avg Route Distance"
-          value="8.1"
-          unit="miles"
-          subtitle="Corridor average"
+          title="Route Geometry"
+          value="Not available"
+          unit="Not provided"
+          subtitle="No verified route paths loaded"
           icon={Activity}
           accentColor="emerald"
-          tooltip="Mean geographic distance across identified arterial transit corridors"
+          tooltip="The map does not have verified route geometries to display"
         />
       </div>
 
@@ -166,13 +166,13 @@ export const GeographicIntelligence = () => {
         <div className="bg-[#0f172a] px-4 py-2.5 border-b border-slate-800 flex items-center justify-between text-xs">
           <div className="flex items-center gap-2 text-slate-300">
             <Layers className="w-4 h-4 text-cyan-400" />
-            <span className="font-semibold text-slate-200">Interactive NYC GIS Mobility Map</span>
+            <span className="font-semibold text-slate-200">NYC TLC Zone Locations</span>
             <span className="text-slate-500">|</span>
-            <span className="text-slate-400">Click any hotspot node or corridor to inspect details</span>
+            <span className="text-slate-400">Click a zone centroid to inspect its location</span>
           </div>
           <div className="text-[11px] font-mono text-cyan-400 flex items-center gap-1.5">
             <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping"></span>
-            CartoDB Dark Tile Layer
+            OpenStreetMap tile layer
           </div>
         </div>
 
@@ -182,6 +182,7 @@ export const GeographicIntelligence = () => {
           selectedBorough={borough}
           highlightZoneId={selectedZone?.id}
           onSelectZone={(zone) => setSelectedZone(zone)}
+          zones={zones}
         />
       </div>
 
@@ -237,10 +238,10 @@ export const GeographicIntelligence = () => {
         {/* Selected Zone Inspector Panel */}
         <div className="lg:col-span-4">
           <ChartCard
-            title="Zone Telematics Inspector"
+            title="TLC Zone Location"
             subtitle={selectedZone ? `TLC Zone #${selectedZone.id}` : 'Select a zone on the map'}
             icon={MapPin}
-            badge={<Badge variant="indigo" size="xs">GPS Centroid</Badge>}
+            badge={<Badge variant="indigo" size="xs">Centroid</Badge>}
           >
             {selectedZone ? (
               <div className="space-y-4">
@@ -252,28 +253,9 @@ export const GeographicIntelligence = () => {
                   <h4 className="text-base font-bold text-white mt-1">{selectedZone.name}</h4>
                   <p className="text-xs text-slate-400 mt-0.5">{selectedZone.type}</p>
 
-                  <div className="mt-4 grid grid-cols-2 gap-2 text-xs font-mono">
-                    <div className="p-2 rounded bg-slate-950/60 border border-slate-800/80">
-                      <span className="text-[10px] text-slate-500 block">Daily Pickups</span>
-                      <span className="text-sm font-bold text-cyan-300">{selectedZone.dailyPickups.toLocaleString()}</span>
-                    </div>
-                    <div className="p-2 rounded bg-slate-950/60 border border-slate-800/80">
-                      <span className="text-[10px] text-slate-500 block">Daily Dropoffs</span>
-                      <span className="text-sm font-bold text-blue-300">{selectedZone.dailyDropoffs.toLocaleString()}</span>
-                    </div>
-                    <div className="p-2 rounded bg-slate-950/60 border border-slate-800/80">
-                      <span className="text-[10px] text-slate-500 block">Avg Passenger Fare</span>
-                      <span className="text-sm font-bold text-emerald-400">${selectedZone.avgFare.toFixed(2)}</span>
-                    </div>
-                    <div className="p-2 rounded bg-slate-950/60 border border-slate-800/80">
-                      <span className="text-[10px] text-slate-500 block">Peak Travel Hour</span>
-                      <span className="text-sm font-bold text-amber-300">{selectedZone.peakHour}</span>
-                    </div>
-                  </div>
-
-                  <div className="mt-3 pt-3 border-t border-slate-800 text-[11px] text-slate-400 flex justify-between font-mono">
-                    <span>Lat: {selectedZone.lat.toFixed(4)}</span>
-                    <span>Lng: {selectedZone.lng.toFixed(4)}</span>
+                  <div className="mt-4 pt-3 border-t border-slate-800 text-[11px] text-slate-400 flex justify-between font-mono">
+                    <span>Lat: {Number(selectedZone.lat).toFixed(4)}</span>
+                    <span>Lng: {Number(selectedZone.lng).toFixed(4)}</span>
                   </div>
                 </div>
 
@@ -283,7 +265,7 @@ export const GeographicIntelligence = () => {
                     Spatial Clustering Context
                   </div>
                   <p className="text-[11px] text-slate-400 leading-relaxed">
-                    Centroid coordinates derived from official NYC Open Data TLC Taxi Zone GIS boundaries.
+                    Centroid locations are available; official zone polygon boundaries are not loaded.
                   </p>
                 </div>
               </div>
@@ -292,7 +274,7 @@ export const GeographicIntelligence = () => {
                 <MapPin className="w-8 h-8 text-slate-600 mb-2" />
                 <h4 className="text-xs font-semibold text-slate-300">No Zone Selected</h4>
                 <p className="text-[11px] text-slate-500 mt-1 max-w-xs">
-                  Click on any circular zone hotspot on the NYC GIS map above to inspect its real-time trip volume, borough, and average fare.
+                  Click a TLC zone centroid on the map to inspect its location.
                 </p>
               </div>
             )}
